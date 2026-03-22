@@ -90,7 +90,7 @@ End with: 💭 For your contemplation: [one reflective question]
 Never fabricate or go beyond what the verses say."""
 
         response = claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             system=system_prompt,
             messages=[{

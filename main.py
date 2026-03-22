@@ -70,7 +70,7 @@ def ask_sanaatan(request: QuestionRequest):
             m = match.metadata
             context += f"\n---\n"
             context += f"Reference: {match.id} "
-            context += f"(Bhagavad Gita, Chapter {m.get(chr(99)+'hapter','?')}, Verse {m.get('verse','?')})\n"
+            context += f"(Bhagavad Gita, Chapter {m.get('chapter','?')}, Verse {m.get('verse','?')})\n"
             context += f"Sanskrit: {m.get('sanskrit','')[:200]}\n"
             context += f"Meaning: {m.get('english','')}\n"
             sources.append({

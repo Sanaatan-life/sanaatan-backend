@@ -72,7 +72,7 @@ def ask(request: QuestionRequest):
 
         # Step 5: Claude
         response = claude.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-3-haiku-20240307",
             max_tokens=1000,
             system="""You are Sanaatan, a wise guide to Hindu scriptures.
 Always cite the specific verse (Bhagavad Gita, Chapter X, Verse Y).

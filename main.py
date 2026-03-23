@@ -31,7 +31,7 @@ def ask(request: QuestionRequest):
 
         OPENAI_KEY    = os.environ.get("OPENAI_API_KEY", "")
         PINECONE_KEY  = os.environ.get("PINECONE_API_KEY", "")
-        PINECONE_HOST = os.environ.get("PINECONE_HOST", "")
+        PINECONE_HOST = os.environ.get("PINECONE_HOST", "").replace("https://", "").replace("http://", "").strip("/")
         ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
         # Log what we have (masked)

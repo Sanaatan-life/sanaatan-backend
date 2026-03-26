@@ -4,6 +4,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from collections import defaultdict
+import time
+
+# ── Simple in-memory rate limiter ─────────────────────────────────────────────
+request_counts = defaultdict(list)
+RATE_LIMIT = 10       # max requests
+WINDOW_SECS = 60      # per minute
+
+
 app = FastAPI()
 
 # Manual CORS — handles ALL responses including errors
@@ -35,7 +44,18 @@ def health():
     return {"status": "Sanaatan API is running", "version": "1.0.0"}
 
 @app.post("/ask")
-def ask(request: QuestionRequest):
+async def ask(request: QuestionRequest, req: Request):
+    # Rate limiting
+    client_ip = req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"
+    now = time.time()
+    request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < WINDOW_SECS]
+    if len(request_counts[client_ip]) >= RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Too many requests. Please wait a moment.", "status": "rate_limited"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+    request_counts[client_ip].append(now)
     try:
         from pinecone import Pinecone
         from openai import OpenAI
@@ -52,13 +72,13 @@ def ask(request: QuestionRequest):
         claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
         q_embedding = client.embeddings.create(
-            input=[request.question],
+            input=[question_request.question],
             model="text-embedding-3-small"
         ).data[0].embedding
 
         results = index.query(
             vector=q_embedding,
-            top_k=request.top_k,
+            top_k=question_request.top_k,
             include_metadata=True
         )
 
@@ -79,11 +99,11 @@ Give a clear practical explanation.
 End with: 💭 For your contemplation: [one reflective question]""",
             messages=[{
                 "role": "user",
-                "content": f"Question: {request.question}\n\nVerses:\n{context}"
+                "content": f"Question: {question_request.question}\n\nVerses:\n{context}"
             }]
         )
 
-        return {"question": request.question, "answer": response.content[0].text, "status": "success"}
+        return {"question": question_request.question, "answer": response.content[0].text, "status": "success"}
 
     except Exception as e:
         return JSONResponse(

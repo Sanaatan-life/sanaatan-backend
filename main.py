@@ -3,19 +3,15 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
 from collections import defaultdict
 import time
 
-# ── Simple in-memory rate limiter ─────────────────────────────────────────────
 request_counts = defaultdict(list)
-RATE_LIMIT = 10       # max requests
-WINDOW_SECS = 60      # per minute
-
+RATE_LIMIT = 10
+WINDOW_SECS = 60
 
 app = FastAPI()
 
-# Manual CORS — handles ALL responses including errors
 @app.middleware("http")
 async def add_cors(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -44,8 +40,7 @@ def health():
     return {"status": "Sanaatan API is running", "version": "1.0.0"}
 
 @app.post("/ask")
-async def ask(request: QuestionRequest, req: Request):
-    # Rate limiting
+async def ask(question_request: QuestionRequest, req: Request):
     client_ip = req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"
     now = time.time()
     request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < WINDOW_SECS]

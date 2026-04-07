@@ -47,7 +47,8 @@ async def debug_ip(req: Request):
     }
 @app.post("/ask")
 async def ask(question_request: QuestionRequest, req: Request):
-    client_ip = req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"
+    forwarded_for = req.headers.get("X-Forwarded-For") or ""
+client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     now = time.time()
     request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < WINDOW_SECS]
     if len(request_counts[client_ip]) >= RATE_LIMIT:

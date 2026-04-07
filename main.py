@@ -20,6 +20,14 @@ index  = pc.Index(host=PINECONE_HOST)
 client = OpenAI(api_key=OPENAI_KEY)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
+# ── Model routing ──────────────────────────────────────────────────────────────
+SONNET = "claude-sonnet-4-20250514"
+HAIKU  = "claude-haiku-4-5-20251001"
+SONNET_TIERS = {"unlimited", "annual"}
+
+def get_model(tier: str) -> str:
+    return SONNET if tier.lower() in SONNET_TIERS else HAIKU
+
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 request_counts = defaultdict(list)
 RATE_LIMIT = 10
@@ -49,6 +57,7 @@ async def add_cors(request: Request, call_next):
 class QuestionRequest(BaseModel):
     question: str
     top_k: int = 5
+    tier: str = "free"
 
 @app.get("/")
 def health():
@@ -78,6 +87,8 @@ async def ask(question_request: QuestionRequest, req: Request):
         )
     request_counts[client_ip].append(now)
     try:
+        model = get_model(question_request.tier)
+
         q_embedding = client.embeddings.create(
             input=[question_request.question],
             model="text-embedding-3-small"
@@ -97,7 +108,7 @@ async def ask(question_request: QuestionRequest, req: Request):
             context += f"Meaning: {m.get('english','')}\n"
 
         response = claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=model,
             max_tokens=1000,
             system="""You are Sanaatan, a wise guide to Hindu scriptures.
 Always cite the specific verse (Bhagavad Gita, Chapter X, Verse Y).
@@ -110,7 +121,12 @@ End with: 💭 For your contemplation: [one reflective question]""",
             }]
         )
 
-        return {"question": question_request.question, "answer": response.content[0].text, "status": "success"}
+        return {
+            "question": question_request.question,
+            "answer": response.content[0].text,
+            "status": "success",
+            "model_used": model
+        }
 
     except Exception as e:
         return JSONResponse(

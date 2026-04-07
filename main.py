@@ -5,7 +5,22 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from collections import defaultdict
 import time
+from pinecone import Pinecone
+from openai import OpenAI
+import anthropic
 
+# ── Clients (initialized once at startup) ─────────────────────────────────────
+OPENAI_KEY    = os.environ.get("OPENAI_API_KEY", "")
+PINECONE_KEY  = os.environ.get("PINECONE_API_KEY", "")
+PINECONE_HOST = os.environ.get("PINECONE_HOST", "").replace("https://", "").strip("/")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+pc     = Pinecone(api_key=PINECONE_KEY)
+index  = pc.Index(host=PINECONE_HOST)
+client = OpenAI(api_key=OPENAI_KEY)
+claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
 request_counts = defaultdict(list)
 RATE_LIMIT = 10
 WINDOW_SECS = 60
@@ -38,17 +53,21 @@ class QuestionRequest(BaseModel):
 @app.get("/")
 def health():
     return {"status": "Sanaatan API is running", "version": "1.0.0"}
+
 @app.get("/debug-ip")
 async def debug_ip(req: Request):
+    forwarded_for = req.headers.get("X-Forwarded-For") or ""
+    client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     return {
         "CF-Connecting-IP": req.headers.get("CF-Connecting-IP"),
         "X-Forwarded-For": req.headers.get("X-Forwarded-For"),
-        "client_ip_resolved": req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"
+        "client_ip_resolved": client_ip
     }
+
 @app.post("/ask")
 async def ask(question_request: QuestionRequest, req: Request):
     forwarded_for = req.headers.get("X-Forwarded-For") or ""
-client_ip = forwarded_for.split(",")[0].strip() or "unknown"
+    client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     now = time.time()
     request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < WINDOW_SECS]
     if len(request_counts[client_ip]) >= RATE_LIMIT:
@@ -59,20 +78,6 @@ client_ip = forwarded_for.split(",")[0].strip() or "unknown"
         )
     request_counts[client_ip].append(now)
     try:
-        from pinecone import Pinecone
-        from openai import OpenAI
-        import anthropic
-
-        OPENAI_KEY    = os.environ.get("OPENAI_API_KEY", "")
-        PINECONE_KEY  = os.environ.get("PINECONE_API_KEY", "")
-        PINECONE_HOST = os.environ.get("PINECONE_HOST", "").replace("https://", "").strip("/")
-        ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
-        pc     = Pinecone(api_key=PINECONE_KEY)
-        index  = pc.Index(host=PINECONE_HOST)
-        client = OpenAI(api_key=OPENAI_KEY)
-        claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-
         q_embedding = client.embeddings.create(
             input=[question_request.question],
             model="text-embedding-3-small"
@@ -109,7 +114,7 @@ End with: 💭 For your contemplation: [one reflective question]""",
 
     except Exception as e:
         return JSONResponse(
-            status_code=200,
+            status_code=500,
             content={"error": str(e), "detail": traceback.format_exc(), "status": "failed"},
             headers={"Access-Control-Allow-Origin": "*"}
         )

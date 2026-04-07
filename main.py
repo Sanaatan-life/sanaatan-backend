@@ -23,7 +23,7 @@ claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 # ── Model routing ──────────────────────────────────────────────────────────────
 SONNET = "claude-sonnet-4-20250514"
 HAIKU  = "claude-haiku-4-5-20251001"
-SONNET_TIERS = {"unlimited", "annual"}
+SONNET_TIERS = {"unlimited", "annual", "free", "starter", "daily"}
 
 def get_model(tier: str) -> str:
     return SONNET if tier.lower() in SONNET_TIERS else HAIKU

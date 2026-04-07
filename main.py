@@ -38,7 +38,13 @@ class QuestionRequest(BaseModel):
 @app.get("/")
 def health():
     return {"status": "Sanaatan API is running", "version": "1.0.0"}
-
+@app.get("/debug-ip")
+async def debug_ip(req: Request):
+    return {
+        "CF-Connecting-IP": req.headers.get("CF-Connecting-IP"),
+        "X-Forwarded-For": req.headers.get("X-Forwarded-For"),
+        "client_ip_resolved": req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"
+    }
 @app.post("/ask")
 async def ask(question_request: QuestionRequest, req: Request):
     client_ip = req.headers.get("CF-Connecting-IP") or req.headers.get("X-Forwarded-For") or "unknown"

@@ -143,3 +143,9 @@ No markdown headers. No bullet points. Wisdom should feel like a conversation wi
             "status": "success",
             "model_used": model
         }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "detail": traceback.format_exc(), "status": "failed"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )

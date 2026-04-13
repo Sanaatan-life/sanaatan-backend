@@ -144,8 +144,13 @@ No markdown headers. No bullet points. Wisdom should feel like a conversation wi
             "model_used": model
         }
     except Exception as e:
+        error_msg = str(e)
+        if "overloaded" in error_msg.lower() or "529" in error_msg:
+            user_message = "The scriptures are busy at this moment. Please try your question again in a few seconds. 🙏"
+        else:
+            user_message = "Something went wrong. Please try again. 🙏"
         return JSONResponse(
             status_code=500,
-            content={"error": str(e), "detail": traceback.format_exc(), "status": "failed"},
+            content={"error": user_message, "status": "failed"},
             headers={"Access-Control-Allow-Origin": "*"}
         )

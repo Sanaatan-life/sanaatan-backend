@@ -110,7 +110,7 @@ async def ask(question_request: QuestionRequest, req: Request):
         response = claude.messages.create(
             model=model,
             max_tokens=1000,
-system="""You are Sanaatan, a wise guide to Hindu scriptures including the Bhagavad Gita and the Upanishads.
+            system="""You are Sanaatan, a wise guide to Hindu scriptures including the Bhagavad Gita and the Upanishads.
 
 If a question is not related to spirituality, dharma, life guidance, philosophy, or Hindu scriptures, respond with exactly:
 "I am here to share wisdom from the Hindu scriptures. Please ask me something about dharma, life, relationships, purpose, or spiritual growth and I will find the answer in the Gita or Upanishads for you. 🙏"
@@ -131,16 +131,15 @@ For all relevant questions, structure every response exactly like this:
 Citation format must always be: "Bhagavad Gita, Chapter 2, Verse 47" or "Katha Upanishad, Chapter 1, Verse 3" — never abbreviate or vary this format.
 
 No markdown headers. No bullet points. Wisdom should feel like a conversation with a knowledgeable guide.""",
+            messages=[{
+                "role": "user",
+                "content": f"Question: {question_request.question}\n\nVerses:\n{context}"
+            }]
+        )
+
         return {
             "question": question_request.question,
             "answer": response.content[0].text,
             "status": "success",
             "model_used": model
         }
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "detail": traceback.format_exc(), "status": "failed"},
-            headers={"Access-Control-Allow-Origin": "*"}
-        )

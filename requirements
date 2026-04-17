@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pinecone
+openai
+anthropic
+httpx
+python-multipart

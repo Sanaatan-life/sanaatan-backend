@@ -1,5 +1,8 @@
 import os
 import traceback
+import hmac
+import hashlib
+import json
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -8,17 +11,29 @@ import time
 from pinecone import Pinecone
 from openai import OpenAI
 import anthropic
+import httpx
 
 # ── Clients (initialized once at startup) ─────────────────────────────────────
-OPENAI_KEY    = os.environ.get("OPENAI_API_KEY", "")
-PINECONE_KEY  = os.environ.get("PINECONE_API_KEY", "")
-PINECONE_HOST = os.environ.get("PINECONE_HOST", "").replace("https://", "").strip("/")
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+OPENAI_KEY             = os.environ.get("OPENAI_API_KEY", "")
+PINECONE_KEY           = os.environ.get("PINECONE_API_KEY", "")
+PINECONE_HOST          = os.environ.get("PINECONE_HOST", "").replace("https://", "").strip("/")
+ANTHROPIC_KEY          = os.environ.get("ANTHROPIC_API_KEY", "")
+RAZORPAY_WEBHOOK_SECRET= os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+SUPABASE_URL           = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY   = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 pc     = Pinecone(api_key=PINECONE_KEY)
 index  = pc.Index(host=PINECONE_HOST)
 client = OpenAI(api_key=OPENAI_KEY)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+# ── Plan ID → Tier mapping ─────────────────────────────────────────────────────
+# Add your Razorpay plan IDs here after getting them from dashboard
+PLAN_TIER_MAP = {
+    "plan_DAILY_ID_HERE":     "daily",
+    "plan_UNLIMITED_ID_HERE": "unlimited",
+    "plan_ANNUAL_ID_HERE":    "annual",
+}
 
 # ── Model routing ──────────────────────────────────────────────────────────────
 SONNET = "claude-sonnet-4-20250514"
@@ -72,6 +87,46 @@ async def debug_ip(req: Request):
         "X-Forwarded-For": req.headers.get("X-Forwarded-For"),
         "client_ip_resolved": client_ip
     }
+
+# ── Razorpay Webhook ───────────────────────────────────────────────────────────
+@app.post("/webhook/razorpay")
+async def razorpay_webhook(req: Request):
+    body = await req.body()
+
+    # Verify signature
+    sig = req.headers.get("X-Razorpay-Signature", "")
+    expected = hmac.new(
+        RAZORPAY_WEBHOOK_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return JSONResponse(status_code=400, content={"error": "Invalid signature"})
+
+    payload = json.loads(body)
+    event   = payload.get("event", "")
+
+    if event == "payment.captured":
+        payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        email   = payment.get("email", "")
+        plan_id = payment.get("description", "")  # or from subscription notes
+        tier    = PLAN_TIER_MAP.get(plan_id, "daily")
+
+        if email:
+            async with httpx.AsyncClient() as hc:
+                await hc.patch(
+                    f"{SUPABASE_URL}/rest/v1/user_profiles",
+                    headers={
+                        "apikey": SUPABASE_SERVICE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    params={"email": f"eq.{email}"},
+                    json={"tier": tier}
+                )
+
+    return JSONResponse(status_code=200, content={"status": "ok"})
 
 @app.post("/ask")
 async def ask(question_request: QuestionRequest, req: Request):

@@ -5,3 +5,4 @@ openai
 anthropic
 httpx
 python-multipart
+slowapi

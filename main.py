@@ -12,6 +12,9 @@ from pinecone import Pinecone
 from openai import OpenAI
 import anthropic
 import httpx
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # ── Clients (initialized once at startup) ─────────────────────────────────────
 OPENAI_KEY             = os.environ.get("OPENAI_API_KEY", "")
@@ -49,6 +52,10 @@ RATE_LIMIT = 10
 WINDOW_SECS = 60
 
 app = FastAPI()
+app = FastAPI()
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.middleware("http")
 async def add_cors(request: Request, call_next):
@@ -129,6 +136,7 @@ async def razorpay_webhook(req: Request):
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 @app.post("/ask")
+@limiter.limit("10/minute")
 async def ask(question_request: QuestionRequest, req: Request):
     forwarded_for = req.headers.get("X-Forwarded-For") or ""
     client_ip = forwarded_for.split(",")[0].strip() or "unknown"

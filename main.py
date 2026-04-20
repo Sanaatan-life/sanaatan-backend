@@ -137,8 +137,8 @@ async def razorpay_webhook(req: Request):
 
 @app.post("/ask")
 @limiter.limit("10/minute")
-async def ask(question_request: QuestionRequest, req: Request):
-    forwarded_for = req.headers.get("X-Forwarded-For") or ""
+async def ask(question_request: QuestionRequest, request: Request):
+    forwarded_for = request.headers.get("X-Forwarded-For") or ""
     client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     now = time.time()
     request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < WINDOW_SECS]

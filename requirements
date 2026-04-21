@@ -3,6 +3,7 @@ uvicorn
 pinecone
 openai
 anthropic
+pydantic
 httpx
 python-multipart
 slowapi

@@ -8,13 +8,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from collections import defaultdict
 import time
+from datetime import date
 from pinecone import Pinecone
 from openai import OpenAI
 import anthropic
 import httpx
 
-
-# ── Clients (initialized once at startup) ─────────────────────────────────────
+# ── Clients ────────────────────────────────────────────────────────────────────
 OPENAI_KEY             = os.environ.get("OPENAI_API_KEY", "")
 PINECONE_KEY           = os.environ.get("PINECONE_API_KEY", "")
 PINECONE_HOST          = os.environ.get("PINECONE_HOST", "").replace("https://", "").strip("/")
@@ -29,28 +29,36 @@ client = OpenAI(api_key=OPENAI_KEY)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 # ── Plan ID → Tier mapping ─────────────────────────────────────────────────────
-# Add your Razorpay plan IDs here after getting them from dashboard
 PLAN_TIER_MAP = {
     "plan_DAILY_ID_HERE":     "daily",
     "plan_UNLIMITED_ID_HERE": "unlimited",
     "plan_ANNUAL_ID_HERE":    "annual",
 }
 
+# ── Daily query limits per tier ────────────────────────────────────────────────
+TIER_LIMITS = {
+    "free":      3,
+    "starter":   15,   # one-time pack, tracked same way
+    "daily":     10,
+    "unlimited": 999999,
+    "annual":    999999,
+}
+
 # ── Model routing ──────────────────────────────────────────────────────────────
 SONNET = "claude-sonnet-4-20250514"
 HAIKU  = "claude-haiku-4-5-20251001"
-SONNET_TIERS = {"unlimited", "annual", "free", "starter", "daily"}
 
 def get_model(tier: str) -> str:
-    return SONNET if tier.lower() in SONNET_TIERS else HAIKU
+    return SONNET if tier.lower() in {"unlimited", "annual"} else HAIKU
 
-# ── Rate limiting ──────────────────────────────────────────────────────────────
+# ── In-memory rate limiting (Cloudflare WAF handles real limiting) ─────────────
 request_counts = defaultdict(list)
 RATE_LIMIT = 10
 WINDOW_SECS = 60
 
 app = FastAPI()
 
+# ── CORS middleware ────────────────────────────────────────────────────────────
 @app.middleware("http")
 async def add_cors(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -70,22 +78,102 @@ async def add_cors(request: Request, call_next):
     response.headers["Access-Control-Expose-Headers"] = "*"
     return response
 
+# ── Request model ──────────────────────────────────────────────────────────────
 class QuestionRequest(BaseModel):
     question: str
     top_k: int = 5
-    tier: str = "free"
+    user_id: str = ""   # Supabase UUID — empty string for anonymous users
 
+# ── Supabase helpers ───────────────────────────────────────────────────────────
+async def get_user_profile(user_id: str) -> dict:
+    """Fetch tier and daily_query_count from Supabase for a logged-in user."""
+    async with httpx.AsyncClient() as hc:
+        resp = await hc.get(
+            f"{SUPABASE_URL}/rest/v1/user_profiles",
+            headers={
+                "apikey": SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            },
+            params={"id": f"eq.{user_id}", "select": "tier,daily_query_count,last_query_date"}
+        )
+        rows = resp.json()
+        if rows:
+            return rows[0]
+        return None
+
+async def check_and_increment_query(user_id: str) -> dict:
+    """
+    Check if user can ask a question. If yes, increment counter.
+    Returns: {"allowed": bool, "tier": str, "remaining": int}
+    """
+    profile = await get_user_profile(user_id)
+    if not profile:
+        # User profile doesn't exist yet — create it
+        await create_user_profile(user_id)
+        return {"allowed": True, "tier": "free", "remaining": 2}
+
+    tier = profile.get("tier", "free")
+    limit = TIER_LIMITS.get(tier, 3)
+    today = str(date.today())
+    last_date = profile.get("last_query_date", "")
+    count = profile.get("daily_query_count", 0)
+
+    # Reset count if it's a new day
+    if last_date != today:
+        count = 0
+
+    if count >= limit:
+        return {"allowed": False, "tier": tier, "remaining": 0}
+
+    # Increment
+    new_count = count + 1
+    async with httpx.AsyncClient() as hc:
+        await hc.patch(
+            f"{SUPABASE_URL}/rest/v1/user_profiles",
+            headers={
+                "apikey": SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            params={"id": f"eq.{user_id}"},
+            json={"daily_query_count": new_count, "last_query_date": today}
+        )
+
+    remaining = limit - new_count
+    return {"allowed": True, "tier": tier, "remaining": remaining}
+
+async def create_user_profile(user_id: str):
+    """Create a new user profile with free tier defaults."""
+    async with httpx.AsyncClient() as hc:
+        await hc.post(
+            f"{SUPABASE_URL}/rest/v1/user_profiles",
+            headers={
+                "apikey": SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={
+                "id": user_id,
+                "tier": "free",
+                "daily_query_count": 1,
+                "last_query_date": str(date.today())
+            }
+        )
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 def health():
-    return {"status": "Sanaatan API is running", "version": "1.0.0"}
+    return {"status": "Sanaatan API is running", "version": "2.0.0"}
 
 @app.get("/debug-ip")
-async def debug_ip(req: Request):
-    forwarded_for = req.headers.get("X-Forwarded-For") or ""
+async def debug_ip(request: Request):
+    forwarded_for = request.headers.get("X-Forwarded-For") or ""
     client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     return {
-        "CF-Connecting-IP": req.headers.get("CF-Connecting-IP"),
-        "X-Forwarded-For": req.headers.get("X-Forwarded-For"),
+        "CF-Connecting-IP": request.headers.get("CF-Connecting-IP"),
+        "X-Forwarded-For": request.headers.get("X-Forwarded-For"),
         "client_ip_resolved": client_ip
     }
 
@@ -93,8 +181,6 @@ async def debug_ip(req: Request):
 @app.post("/webhook/razorpay")
 async def razorpay_webhook(req: Request):
     body = await req.body()
-
-    # Verify signature
     sig = req.headers.get("X-Razorpay-Signature", "")
     expected = hmac.new(
         RAZORPAY_WEBHOOK_SECRET.encode(),
@@ -110,9 +196,8 @@ async def razorpay_webhook(req: Request):
     if event == "payment.captured":
         payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
         email   = payment.get("email", "")
-        plan_id = payment.get("description", "")  # or from subscription notes
+        plan_id = payment.get("description", "")
         tier    = PLAN_TIER_MAP.get(plan_id, "daily")
-
         if email:
             async with httpx.AsyncClient() as hc:
                 await hc.patch(
@@ -129,8 +214,10 @@ async def razorpay_webhook(req: Request):
 
     return JSONResponse(status_code=200, content={"status": "ok"})
 
+# ── Main ask endpoint ──────────────────────────────────────────────────────────
 @app.post("/ask")
 async def ask(question_request: QuestionRequest, request: Request):
+    # ── IP-based rate limit (belt + suspenders with Cloudflare WAF) ──
     forwarded_for = request.headers.get("X-Forwarded-For") or ""
     client_ip = forwarded_for.split(",")[0].strip() or "unknown"
     now = time.time()
@@ -142,8 +229,34 @@ async def ask(question_request: QuestionRequest, request: Request):
             headers={"Access-Control-Allow-Origin": "*"}
         )
     request_counts[client_ip].append(now)
+
+    # ── User query limit check ──
+    user_id = question_request.user_id.strip()
+
+    if user_id:
+        # Logged-in user — enforce server-side daily limit
+        result = await check_and_increment_query(user_id)
+        if not result["allowed"]:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "You have reached your daily question limit. Upgrade for more questions.",
+                    "status": "limit_reached",
+                    "tier": result["tier"],
+                    "remaining": 0
+                },
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+        tier = result["tier"]
+        remaining = result["remaining"]
+    else:
+        # Anonymous user — frontend handles limit via localStorage
+        # Backend trusts frontend for anon users (no auth = no server enforcement)
+        tier = "free"
+        remaining = None
+
     try:
-        model = get_model(question_request.tier)
+        model = get_model(tier)
 
         q_embedding = client.embeddings.create(
             input=[question_request.question],
@@ -193,12 +306,18 @@ No markdown headers. No bullet points. Wisdom should feel like a conversation wi
             }]
         )
 
-        return {
+        resp_body = {
             "question": question_request.question,
             "answer": response.content[0].text,
             "status": "success",
-            "model_used": model
+            "model_used": model,
+            "tier": tier,
         }
+        if remaining is not None:
+            resp_body["remaining"] = remaining
+
+        return resp_body
+
     except Exception as e:
         error_msg = str(e)
         if "overloaded" in error_msg.lower() or "529" in error_msg:

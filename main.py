@@ -97,7 +97,7 @@ async def get_user_profile(user_id: str) -> dict:
             params={"id": f"eq.{user_id}", "select": "tier,daily_query_count,last_query_date"}
         )
         rows = resp.json()
-        if rows:
+        if isinstance(rows, list) and rows:
             return rows[0]
         return None
 

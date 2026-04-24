@@ -82,7 +82,8 @@ async def add_cors(request: Request, call_next):
 class QuestionRequest(BaseModel):
     question: str
     top_k: int = 5
-    user_id: str = ""   # Supabase UUID — empty string for anonymous users
+    user_id: str = ""
+    language: str = "en"
 
 # ── Supabase helpers ───────────────────────────────────────────────────────────
 async def get_user_profile(user_id: str) -> dict:
@@ -276,10 +277,14 @@ async def ask(question_request: QuestionRequest, request: Request):
             context += f"Sanskrit: {m.get('sanskrit','')[:200]}\n"
             context += f"Meaning: {m.get('english','')}\n"
 
+        hindi_instruction = ""
+        if question_request.language == "hi":
+            hindi_instruction = "\n\nIMPORTANT: Respond entirely in Hindi (Devanagari script). Keep all Sanskrit verses exactly as they are — do not translate Sanskrit. The explanation, the insight, and the contemplation question must all be in Hindi. Use natural, warm Hindi prose — not formal or Sanskritised Hindi."
+
         response = claude.messages.create(
             model=model,
             max_tokens=1000,
-            system="""You are Sanaatan, a wise guide to Hindu scriptures including the Bhagavad Gita and the Upanishads.
+            system=f"""You are Sanaatan, a wise guide to Hindu scriptures including the Bhagavad Gita and the Upanishads.{hindi_instruction}
 
 If a question is not related to spirituality, dharma, life guidance, philosophy, or Hindu scriptures, respond with exactly:
 "I am here to share wisdom from the Hindu scriptures. Please ask me something about dharma, life, relationships, purpose, or spiritual growth and I will find the answer in the Gita or Upanishads for you. 🙏"

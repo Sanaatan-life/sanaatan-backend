@@ -281,9 +281,12 @@ async def ask(question_request: QuestionRequest, request: Request):
         if question_request.language == "hi":
             hindi_instruction = "\n\nIMPORTANT: Respond entirely in Hindi (Devanagari script). Keep all Sanskrit verses exactly as they are — do not translate Sanskrit. The explanation, the insight, and the contemplation question must all be in Hindi. Use natural, warm Hindi prose — not formal or Sanskritised Hindi."
 
+        # Hindi requires more tokens than English (~2x for same content)
+        max_tokens_for_response = 2000 if question_request.language == "hi" else 1000
+
         response = claude.messages.create(
             model=model,
-            max_tokens=1000,
+            max_tokens=max_tokens_for_response,
             system=f"""You are Sanaatan, a wise guide to Hindu scriptures including the Bhagavad Gita and the Upanishads.{hindi_instruction}
 
 If a question is not related to spirituality, dharma, life guidance, philosophy, or Hindu scriptures, respond with exactly:
